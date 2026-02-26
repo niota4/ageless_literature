@@ -1,0 +1,91 @@
+# =============================================================================
+# BASE DOCKER COMPOSE FILE
+# =============================================================================
+# This file defines common services for all environments.
+# Use with environment-specific override files:
+#   LOCAL:  docker compose -f docker-compose.yml -f docker-compose.local.yml up
+#   REMOTE: docker compose -f docker-compose.yml -f docker-compose.remote.yml up
+# =============================================================================
+
+services:
+  # Redis for Socket.IO and caching
+  redis:
+    image: redis:7-alpine
+    container_name: ageless-lit-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # MeiliSearch for search
+  meilisearch:
+    image: getmeili/meilisearch:v1.5
+    container_name: ageless-lit-meilisearch
+    environment:
+      MEILI_ENV: ${MEILI_ENV:-development}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-masterKey}
+    ports:
+      - '7700:7700'
+    volumes:
+      - meilisearch_data:/meili_data
+    restart: unless-stopped
+
+  # Backend API (Node.js + Express)
+  # Database connection configured via env-specific override files
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: ageless-lit-api
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      API_PORT: ${API_PORT:-3001}
+      DATABASE_URL: ${DATABASE_URL}
+      DB_SSL: ${DB_SSL:-false}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      MEILISEARCH_HOST: ${MEILISEARCH_HOST:-http://meilisearch:7700}
+      MEILISEARCH_MASTER_KEY: ${MEILI_MASTER_KEY:-masterKey}
+    env_file:
+      - .env
+    ports:
+      - '3001:3001'
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend Web (Next.js)
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+        INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3001}
+    container_name: ageless-lit-web
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      API_URL: ${API_URL:-http://api:3001}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3001}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    env_file:
+      - .env
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  meilisearch_data:
+
+networks:
+  default:
+    name: ageless-lit-network
